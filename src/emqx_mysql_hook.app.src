@@ -1,0 +1,7 @@
+{application,emqx_mysql_hook,
+             [{description,"EMQ X Mysql Plugin"},
+              {vsn,"1.0.0"},
+              {modules,[]},
+              {registered,[emqx_mysql_hook_sup]},
+              {applications,[kernel,stdlib,jsx,clique]},
+              {mod,{emqx_mysql_hook_app,[]}}]}.
