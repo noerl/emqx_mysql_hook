@@ -137,7 +137,7 @@ on_action_create_data_to_mysql(_Id, _Params) ->
         % io:format("Id:~p, Payload:~p~n", [Id, Payload]),
         Sql = "INSERT INTO mqtt_data (`message_id`, `serial_no`, `voltage_a`, `voltage_b`, `voltage_c`, `current_a`, `current_b`, `current_c`, `zero_line`, `open_record`, `open_numebr`, `conc_mode`, `is_steal`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         Fun = fun(Meter) ->
-            MessageId = proplists:get_value(<<"message_id">>, Meter),
+            MessageId = proplists:get_value(<<"message_id">>, Id),
             SerialNo = proplists:get_value(<<"serial_No">>, Meter),
             VoltageA = proplists:get_value(<<"voltage_a">>, Meter),
             VoltageB = proplists:get_value(<<"voltage_b">>, Meter),
@@ -150,7 +150,7 @@ on_action_create_data_to_mysql(_Id, _Params) ->
             OpenNumebr = proplists:get_value(<<"open_numebr">>, Meter),
             ConcMode = proplists:get_value(<<"conc_mode">>, Meter),
             IsSteal = proplists:get_value(<<"is_steal">>, Meter),
-            [MessageId, SerialNo, VoltageA, VoltageB, VoltageC, CurrentA, CurrentB, CurrentC, ZeroLine, OpenRecord, ConcMode, IsSteal]
+            [MessageId, SerialNo, VoltageA, VoltageB, VoltageC, CurrentA, CurrentB, CurrentC, ZeroLine, OpenRecord, OpenNumebr, ConcMode, IsSteal]
         end,
         NewMeterList = lists:map(Fun, MeterList),
         mysql:query(mysql_client, Sql, NewMeterList)
