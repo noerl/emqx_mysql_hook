@@ -98,7 +98,7 @@
 %%------------------------------------------------------------------------------
 
 -spec(on_resource_create(binary(), map()) -> map()).
-on_resource_create(ResId, Conf = #{<<"host">> := Host, <<"port">> := Port, <<"db">> := DB, <<"user">> => User, <<"pwd">> := Pwd}) ->
+on_resource_create(ResId, Conf = #{<<"host">> := Host, <<"port">> := Port, <<"db">> := DB, <<"user">> := User, <<"pwd">> := Pwd}) ->
     io:format("Conf:~p~n", [Conf]),
     MysqlOption = [
         {name, {local, mysql_client}}, 
