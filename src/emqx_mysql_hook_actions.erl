@@ -109,8 +109,8 @@ on_resource_create(ResId, Conf = #{<<"host">> := Host, <<"port">> := Port, <<"db
         {database, binary_to_list(DB)}
     ],
     case mysql:start_link(MysqlOption) of
-        {ok, _Pid} ->
-            Conf;
+        {ok, Pid} ->
+            Conf#{pid => Pid};
         {error, Reason} ->
             ?LOG(error, "Initiate Resource ~p failed, ResId: ~p, ~0p",
                 [?RESOURCE_TYPE_MYSQLHOOK, ResId, Reason]),
@@ -120,7 +120,8 @@ on_resource_create(ResId, Conf = #{<<"host">> := Host, <<"port">> := Port, <<"db
 
 -spec(on_get_resource_status(binary(), map()) -> map()).
 on_get_resource_status(_ResId, _Params) ->
-    #{is_alive => erlang:is_process_alive(whereis(mysql_client))}.
+    io:format("_Params:~p~n", [_Params]),
+    #{is_alive => erlang:is_process_alive(erlang:whereis(mysql_client))}.
 
 -spec(on_resource_destroy(binary(), map()) -> ok | {error, Reason::term()}).
 on_resource_destroy(_ResId, _Params) ->
