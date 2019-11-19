@@ -157,11 +157,7 @@ on_action_create_data_to_mysql(_Id, #{<<"pool">> := PoolName}) ->
         Sql = "INSERT INTO mqtt_data (`message_id`, `serial_no`, `voltage_a`, `voltage_b`, `voltage_c`, `current_a`, `current_b`, `current_c`, `zero_line`, `open_record`, `open_numebr`, `conc_mode`, `is_steal`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ecpool:with_client(PoolName, 
             fun(Pid) -> 
-                mysql:prepare(Pid, insert_mqtt_data, Sql)
-            end
-        ),
-        ecpool:with_client(PoolName, 
-            fun(Pid) -> 
+                mysql:prepare(Pid, insert_mqtt_data, Sql),
                 Fun = fun(Meter) ->
                     SerialNo = proplists:get_value(<<"serial_No">>, Meter),
                     VoltageA = mysql_value(proplists:get_value(<<"voltage_a">>, Meter)),
