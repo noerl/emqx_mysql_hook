@@ -14,21 +14,21 @@
                      description => #{en => <<"HOST">>,
                                       zh => <<"HOST"/utf8>>}},
             port => #{type => number,
-                     default => 6379,
+                     default => 3306,
                      order => 2,
                      title => #{en => <<"PORT">>,
                                 zh => <<"端口"/utf8>>},
                      description => #{en => <<"PORT">>,
                                       zh => <<"端口"/utf8>>}},
             db => #{type => string,
-                     default => 0,
+                     default => <<"">>,
                      order => 5,
                      title => #{en => <<"Database">>,
                                 zh => <<"数据库"/utf8>>},
                      description => #{en => <<"Database">>,
                                       zh => <<"数据库"/utf8>>}},
             user => #{type => string,
-                     default => 0,
+                     default => <<"root">>,
                      order => 3,
                      title => #{en => <<"UserName">>,
                                 zh => <<"用户名"/utf8>>},
@@ -101,7 +101,6 @@
 on_resource_create(ResId, Conf = #{<<"host">> := Host, <<"port">> := Port, <<"db">> := DB, <<"user">> := User, <<"pwd">> := Pwd}) ->
     io:format("Conf:~p~n", [Conf]),
     MysqlOption = [
-        {name, {local, mysql_client}}, 
         {host, binary_to_list(Host)}, 
         {port, Port}, 
         {user, binary_to_list(User)},
@@ -119,9 +118,8 @@ on_resource_create(ResId, Conf = #{<<"host">> := Host, <<"port">> := Port, <<"db
     
 
 -spec(on_get_resource_status(binary(), map()) -> map()).
-on_get_resource_status(_ResId, _Params) ->
-    io:format("_Params:~p~n", [_Params]),
-    #{is_alive => erlang:is_process_alive(erlang:whereis(mysql_client))}.
+on_get_resource_status(_ResId, #{pid := Pid}) ->
+    #{is_alive => erlang:is_process_alive(Pid)}.
 
 -spec(on_resource_destroy(binary(), map()) -> ok | {error, Reason::term()}).
 on_resource_destroy(_ResId, _Params) ->
@@ -129,16 +127,15 @@ on_resource_destroy(_ResId, _Params) ->
 
 %% An action that forwards publish messages to mysql.
 -spec(on_action_create_data_to_mysql(Id::binary(), #{}) -> action_fun()).
-on_action_create_data_to_mysql(_Id, _Params) ->
+on_action_create_data_to_mysql(_Id, #{pid := Pid}) ->
     fun(Selected, _Envs) ->
-        #{id := Id, payload := Payload} = Selected,
+        #{id := MessageId, payload := Payload} = Selected,
         Data = jsx:decode(Payload),
         MeterList = proplists:get_value(<<"meter_measurement">>, Data),
 
-        % io:format("Id:~p, Payload:~p~n", [Id, Payload]),
+        io:format("Id:~p, Payload:~p~n", [MessageId, Payload]),
         Sql = "INSERT INTO mqtt_data (`message_id`, `serial_no`, `voltage_a`, `voltage_b`, `voltage_c`, `current_a`, `current_b`, `current_c`, `zero_line`, `open_record`, `open_numebr`, `conc_mode`, `is_steal`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         Fun = fun(Meter) ->
-            MessageId = proplists:get_value(<<"message_id">>, Id),
             SerialNo = proplists:get_value(<<"serial_No">>, Meter),
             VoltageA = proplists:get_value(<<"voltage_a">>, Meter),
             VoltageB = proplists:get_value(<<"voltage_b">>, Meter),
@@ -154,7 +151,7 @@ on_action_create_data_to_mysql(_Id, _Params) ->
             [MessageId, SerialNo, VoltageA, VoltageB, VoltageC, CurrentA, CurrentB, CurrentC, ZeroLine, OpenRecord, OpenNumebr, ConcMode, IsSteal]
         end,
         NewMeterList = lists:map(Fun, MeterList),
-        mysql:query(mysql_client, Sql, NewMeterList)
+        mysql:query(Pid, Sql, NewMeterList)
     end.
     
     
