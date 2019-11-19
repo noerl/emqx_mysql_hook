@@ -90,6 +90,9 @@
         , on_resource_destroy/2
         ]).
 
+%% Callbacks of ecpool Worker
+-export([connect/1]).
+
 -export([ on_action_create_data_to_mysql/2
         ]).
 
@@ -99,42 +102,64 @@
 
 -spec(on_resource_create(binary(), map()) -> map()).
 on_resource_create(ResId, Conf = #{<<"host">> := Host, <<"port">> := Port, <<"db">> := DB, <<"user">> := User, <<"pwd">> := Pwd}) ->
+    {ok, _} = application:ensure_all_started(ecpool),
     io:format("Conf:~p~n", [Conf]),
-    MysqlOption = [
+    PoolName = list_to_atom("mysql:" ++ binary_to_list(ResId)),
+    Options = [
+        {pool_size, 2},
+        {pool_name, PoolName},
         {host, binary_to_list(Host)}, 
         {port, Port}, 
         {user, binary_to_list(User)},
         {password, binary_to_list(Pwd)},
         {database, binary_to_list(DB)}
     ],
-    case mysql:start_link(MysqlOption) of
-        {ok, Pid} ->
-            Conf#{pid => Pid};
-        {error, Reason} ->
-            ?LOG(error, "Initiate Resource ~p failed, ResId: ~p, ~0p",
-                [?RESOURCE_TYPE_MYSQLHOOK, ResId, Reason]),
-            error({connect_failure, Reason})
-    end.
+    start_resource(ResId, PoolName, Options),
+    case test_resource_status(PoolName) of
+        true -> ok;
+        false ->
+            on_resource_destroy(ResId, #{<<"pool">> => PoolName}),
+            error({{?RESOURCE_TYPE_MYSQLHOOK, ResId}, connection_failed})
+    end,
+    #{<<"pool">> => PoolName}.
+
+    
     
 
 -spec(on_get_resource_status(binary(), map()) -> map()).
-on_get_resource_status(_ResId, #{pid := Pid}) ->
-    #{is_alive => erlang:is_process_alive(Pid)}.
+on_get_resource_status(_ResId, #{<<"pool">> := PoolName}) ->
+    IsAlive = test_resource_status(PoolName),
+    #{is_alive => IsAlive}.
+
 
 -spec(on_resource_destroy(binary(), map()) -> ok | {error, Reason::term()}).
-on_resource_destroy(_ResId, _Params) ->
-    ok.
+on_resource_destroy(ResId, #{<<"pool">> := PoolName}) ->
+    ?LOG(info, "Destroying Resource ~p, ResId: ~p", [?RESOURCE_TYPE_MYSQLHOOK, ResId]),
+    case ecpool:stop_sup_pool(PoolName) of
+        ok ->
+            ?LOG(info, "Destroyed Resource ~p Successfully, ResId: ~p", [?RESOURCE_TYPE_MYSQLHOOK, ResId]);
+        {error, Reason} ->
+            ?LOG(error, "Destroy Resource ~p failed, ResId: ~p, ~p", [?RESOURCE_TYPE_MYSQLHOOK, ResId, Reason]),
+            error({{?RESOURCE_TYPE_MYSQLHOOK, ResId}, destroy_failed})
+    end.
 
 %% An action that forwards publish messages to mysql.
 -spec(on_action_create_data_to_mysql(Id::binary(), #{}) -> action_fun()).
-on_action_create_data_to_mysql(_Id, #{pid := Pid}) ->
+on_action_create_data_to_mysql(_Id, #{<<"pool">> := PoolName}) ->
     fun(Selected, _Envs) ->
         #{id := MessageId, payload := Payload} = Selected,
+        io:format("Selected:~p~n_Envs:~p~n", [Selected, _Envs]),
+        io:format("Id:~p, Payload:~p~n", [MessageId, Payload]),
+
         Data = jsx:decode(Payload),
         MeterList = proplists:get_value(<<"meter_measurement">>, Data),
 
-        io:format("Id:~p, Payload:~p~n", [MessageId, Payload]),
-        Sql = "INSERT INTO mqtt_data (`message_id`, `serial_no`, `voltage_a`, `voltage_b`, `voltage_c`, `current_a`, `current_b`, `current_c`, `zero_line`, `open_record`, `open_numebr`, `conc_mode`, `is_steal`) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        Sql = "INSERT INTO mqtt_data (`message_id`, `serial_no`, `voltage_a`, `voltage_b`, `voltage_c`, `current_a`, `current_b`, `current_c`, `zero_line`, `open_record`, `open_numebr`, `conc_mode`, `is_steal`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ecpool:with_client(PoolName, 
+            fun(Pid) -> 
+                mysql:prepare(Pid, insert_mqtt_data, Sql)
+            end
+        ),
         Fun = fun(Meter) ->
             SerialNo = proplists:get_value(<<"serial_No">>, Meter),
             VoltageA = proplists:get_value(<<"voltage_a">>, Meter),
@@ -151,10 +176,34 @@ on_action_create_data_to_mysql(_Id, #{pid := Pid}) ->
             [MessageId, SerialNo, VoltageA, VoltageB, VoltageC, CurrentA, CurrentB, CurrentC, ZeroLine, OpenRecord, OpenNumebr, ConcMode, IsSteal]
         end,
         NewMeterList = lists:map(Fun, MeterList),
-        mysql:query(Pid, Sql, NewMeterList)
+        ecpool:with_client(PoolName, 
+            fun(Pid) -> 
+                [mysql:execute(Pid, insert_mqtt_data, MeterData) || MeterData <- NewMeterList]
+            end
+        )
     end.
+
+
+connect(Options) ->
+    mysql:start_link(Options).
     
     
+start_resource(ResId, PoolName, Options) ->
+    case ecpool:start_sup_pool(PoolName, ?MODULE, Options) of
+        {ok, _} ->
+            ?LOG(info, "Initiated Resource ~p Successfully, ResId: ~p", [?RESOURCE_TYPE_MYSQLHOOK, ResId]);
+        {error, {already_started, _Pid}} ->
+            on_resource_destroy(ResId, #{<<"pool">> => PoolName}),
+            start_resource(ResId, PoolName, Options);
+        {error, Reason} ->
+            ?LOG(error, "Initiate Resource ~p failed, ResId: ~p, ~p", [?RESOURCE_TYPE_MYSQLHOOK, ResId, Reason]),
+            on_resource_destroy(ResId, #{<<"pool">> => PoolName}),
+            error({{?RESOURCE_TYPE_MYSQLHOOK, ResId}, create_failed})
+    end.
+
+test_resource_status(PoolName) ->
+    Status = [erlang:is_process_alive(Worker) || {_WorkerName, Worker} <- ecpool:workers(PoolName)],
+    lists:any(fun(St) -> St =:= true end, Status).
 
 %%------------------------------------------------------------------------------
 %% Internal functions
