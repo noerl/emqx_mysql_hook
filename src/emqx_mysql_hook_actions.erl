@@ -147,35 +147,32 @@ on_resource_destroy(ResId, #{<<"pool">> := PoolName}) ->
 -spec(on_action_create_data_to_mysql(Id::binary(), #{}) -> action_fun()).
 on_action_create_data_to_mysql(_Id, #{<<"pool">> := PoolName}) ->
     fun(Selected, _Envs) ->
-        #{id := MessageId, payload := Payload} = Selected,
-        io:format("Selected:~p~n_Envs:~p~n", [Selected, _Envs]),
-        io:format("Id:~p, Payload:~p~n", [MessageId, Payload]),
+        #{id := MessageId, topic := Topic, payload := Payload} = Selected,
+        TopicList = binary:split(Topic, <<"/">>, [global]),
+        DeviceSn = lists:nth(4, TopicList),
 
         Data = jsx:decode(Payload),
         MeterList = proplists:get_value(<<"meter_measurement">>, Data),
 
-        Sql = "INSERT INTO mqtt_data (`message_id`, `serial_no`, `voltage_a`, `voltage_b`, `voltage_c`, `current_a`, `current_b`, `current_c`, `zero_line`, `open_record`, `open_numebr`, `conc_mode`, `is_steal`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        MqttDataSql = "INSERT INTO mqtt_data (`message_id`, `serial_no`, `voltage_a`, `voltage_b`, `voltage_c`, `current_a`, `current_b`, `current_c`, `zero_line`, `open_record`, `open_numebr`, `conc_mode`, `is_steal`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        MqttMsgSql = "INSERT INTO mqtt_message (`id`, `meter_number`, `verion`, `dev_ts`, `device_sn`) VALUES (?, ?, ?, ?, ?)",
+
+        MeterNumber = mysql_value(proplists:get_value(<<"meter_number">>, Data)),
+        Version = mysql_value(proplists:get_value(<<"verion">>, Data)),
+        DevTS = mysql_value(proplists:get_value(<<"ts">>, Data)),
+        MsgData = [MessageId, MeterNumber, Version, DevTS, DeviceSn],
+
+        NewMeterList = kvlist_to_vlist(MessageId, MeterList),
+
         ecpool:with_client(PoolName, 
             fun(Pid) -> 
-                mysql:prepare(Pid, insert_mqtt_data, Sql),
-                Fun = fun(Meter) ->
-                    SerialNo = proplists:get_value(<<"serial_No">>, Meter),
-                    VoltageA = mysql_value(proplists:get_value(<<"voltage_a">>, Meter)),
-                    VoltageB = mysql_value(proplists:get_value(<<"voltage_b">>, Meter)),
-                    VoltageC = mysql_value(proplists:get_value(<<"voltage_c">>, Meter)),
-                    CurrentA = mysql_value(proplists:get_value(<<"current_a">>, Meter)),
-                    CurrentB = mysql_value(proplists:get_value(<<"current_b">>, Meter)),
-                    CurrentC = mysql_value(proplists:get_value(<<"current_c">>, Meter)),
-                    ZeroLine = mysql_value(proplists:get_value(<<"zero_line">>, Meter)),
-                    OpenRecord = mysql_value(proplists:get_value(<<"open_record">>, Meter)),
-                    OpenNumebr = mysql_value(proplists:get_value(<<"open_numebr">>, Meter)),
-                    ConcMode = mysql_value(proplists:get_value(<<"conc_mode">>, Meter)),
-                    IsSteal = mysql_value(proplists:get_value(<<"is_steal">>, Meter)),
-                    MeterData = [MessageId, SerialNo, VoltageA, VoltageB, VoltageC, CurrentA, CurrentB, CurrentC, ZeroLine, OpenRecord, OpenNumebr, ConcMode, IsSteal],
-                    Result = mysql:execute(Pid, insert_mqtt_data, MeterData),
-                    io:format("Result:~p~n", [Result])
+                mysql:prepare(Pid, insert_mqtt_data, MqttDataSql),
+                mysql:prepare(Pid, insert_mqtt_msg, MqttMsgSql),
+                mysql:execute(Pid, insert_mqtt_msg, MsgData),
+                Fun = fun(MeterData) ->
+                    mysql:execute(Pid, insert_mqtt_data, MeterData)
                 end,
-                lists:foreach(Fun, MeterList)
+                lists:foreach(Fun, NewMeterList)
             end
         )
     end.
@@ -205,6 +202,25 @@ test_resource_status(PoolName) ->
 
 mysql_value(<<>>) -> null;
 mysql_value(Value) -> Value.
+
+
+kvlist_to_vlist(MessageId, MeterList) ->
+    Fun = fun(Meter) ->
+            SerialNo = proplists:get_value(<<"serial_No">>, Meter),
+            VoltageA = mysql_value(proplists:get_value(<<"voltage_a">>, Meter)),
+            VoltageB = mysql_value(proplists:get_value(<<"voltage_b">>, Meter)),
+            VoltageC = mysql_value(proplists:get_value(<<"voltage_c">>, Meter)),
+            CurrentA = mysql_value(proplists:get_value(<<"current_a">>, Meter)),
+            CurrentB = mysql_value(proplists:get_value(<<"current_b">>, Meter)),
+            CurrentC = mysql_value(proplists:get_value(<<"current_c">>, Meter)),
+            ZeroLine = mysql_value(proplists:get_value(<<"zero_line">>, Meter)),
+            OpenRecord = mysql_value(proplists:get_value(<<"open_record">>, Meter)),
+            OpenNumebr = mysql_value(proplists:get_value(<<"open_numebr">>, Meter)),
+            ConcMode = mysql_value(proplists:get_value(<<"conc_mode">>, Meter)),
+            IsSteal = mysql_value(proplists:get_value(<<"is_steal">>, Meter)),
+            [MessageId, SerialNo, VoltageA, VoltageB, VoltageC, CurrentA, CurrentB, CurrentC, ZeroLine, OpenRecord, OpenNumebr, ConcMode, IsSteal]
+        end,
+    lists:map(Fun, MeterList).
 %%------------------------------------------------------------------------------
 %% Internal functions
 %%------------------------------------------------------------------------------
