@@ -149,12 +149,12 @@ on_action_create_data_to_mysql(_Id, #{<<"pool">> := PoolName}) ->
     fun(Selected, _Envs) ->
         #{id := MessageId, topic := Topic, payload := Payload} = Selected,
         TopicList = binary:split(Topic, <<"/">>, [global]),
-        DeviceSn = lists:nth(4, TopicList),
+        DeviceSn = lists:nth(5, TopicList),
 
         Data = jsx:decode(Payload),
         MeterList = proplists:get_value(<<"meter_measurement">>, Data),
 
-        MqttDataSql = "INSERT INTO mqtt_data (`message_id`, `serial_no`, `voltage_a`, `voltage_b`, `voltage_c`, `current_a`, `current_b`, `current_c`, `zero_line`, `open_record`, `open_numebr`, `conc_mode`, `is_steal`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        MqttDataSql = "INSERT INTO mqtt_data (`message_id`, `serial_no`, `voltage_a`, `voltage_b`, `voltage_c`, `current_a`, `current_b`, `current_c`, `zero_line`, `open_record`, `open_number`, `conc_mode`, `is_steal`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         MqttMsgSql = "INSERT INTO mqtt_message (`id`, `meter_number`, `verion`, `dev_ts`, `device_sn`) VALUES (?, ?, ?, ?, ?)",
 
         MeterNumber = mysql_value(proplists:get_value(<<"meter_number">>, Data)),
@@ -201,6 +201,7 @@ test_resource_status(PoolName) ->
 
 
 mysql_value(<<>>) -> null;
+mysql_value(undefined) -> null;
 mysql_value(Value) -> Value.
 
 
@@ -215,7 +216,7 @@ kvlist_to_vlist(MessageId, MeterList) ->
             CurrentC = mysql_value(proplists:get_value(<<"current_c">>, Meter)),
             ZeroLine = mysql_value(proplists:get_value(<<"zero_line">>, Meter)),
             OpenRecord = mysql_value(proplists:get_value(<<"open_record">>, Meter)),
-            OpenNumebr = mysql_value(proplists:get_value(<<"open_numebr">>, Meter)),
+            OpenNumebr = mysql_value(proplists:get_value(<<"open_number">>, Meter)),
             ConcMode = mysql_value(proplists:get_value(<<"conc_mode">>, Meter)),
             IsSteal = mysql_value(proplists:get_value(<<"is_steal">>, Meter)),
             [MessageId, SerialNo, VoltageA, VoltageB, VoltageC, CurrentA, CurrentB, CurrentC, ZeroLine, OpenRecord, OpenNumebr, ConcMode, IsSteal]
