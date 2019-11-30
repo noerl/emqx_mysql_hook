@@ -150,29 +150,21 @@ on_action_create_data_to_mysql(_Id, #{<<"pool">> := PoolName}) ->
         #{id := MessageId, topic := Topic, payload := Payload} = Selected,
         TopicList = binary:split(Topic, <<"/">>, [global]),
         DeviceSn = lists:nth(5, TopicList),
-
+        % io:format("Payload:~p~n", [Payload]),
         Data = jsx:decode(Payload),
         MeterList = proplists:get_value(<<"meter_measurement">>, Data),
 
-        MqttDataSql = "INSERT INTO mqtt_data (`message_id`, `serial_no`, `voltage_a`, `voltage_b`, `voltage_c`, `current_a`, `current_b`, `current_c`, `zero_line`, `open_record`, `open_number`, `conc_mode`, `is_steal`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        MqttMsgSql = "INSERT INTO mqtt_message (`id`, `meter_number`, `verion`, `dev_ts`, `device_sn`) VALUES (?, ?, ?, ?, ?)",
-
-        MeterNumber = mysql_value(proplists:get_value(<<"meter_number">>, Data)),
-        Version = mysql_value(proplists:get_value(<<"verion">>, Data)),
-        DevTS = mysql_value(proplists:get_value(<<"ts">>, Data)),
-        MsgData = [MessageId, MeterNumber, Version, DevTS, DeviceSn],
-
-        NewMeterList = kvlist_to_vlist(MessageId, MeterList),
+    
+        InsertMsgSql = mqtt_msg_sql(MessageId, DeviceSn, Data),
+        InsertDataList = mqtt_data_sql(MessageId, MeterList),
 
         ecpool:with_client(PoolName, 
             fun(Pid) -> 
-                mysql:prepare(Pid, insert_mqtt_data, MqttDataSql),
-                mysql:prepare(Pid, insert_mqtt_msg, MqttMsgSql),
-                mysql:execute(Pid, insert_mqtt_msg, MsgData),
-                Fun = fun(MeterData) ->
-                    mysql:execute(Pid, insert_mqtt_data, MeterData)
+                mysql:query(Pid, InsertMsgSql),
+                Fun = fun(Sql) ->
+                    mysql:query(Pid, Sql)
                 end,
-                lists:foreach(Fun, NewMeterList)
+                lists:foreach(Fun, InsertDataList)
             end
         )
     end.
@@ -200,28 +192,58 @@ test_resource_status(PoolName) ->
     lists:any(fun(St) -> St =:= true end, Status).
 
 
-mysql_value(<<>>) -> null;
-mysql_value(undefined) -> null;
-mysql_value(Value) -> Value.
 
 
-kvlist_to_vlist(MessageId, MeterList) ->
-    Fun = fun(Meter) ->
-            SerialNo = proplists:get_value(<<"serial_No">>, Meter),
-            VoltageA = mysql_value(proplists:get_value(<<"voltage_a">>, Meter)),
-            VoltageB = mysql_value(proplists:get_value(<<"voltage_b">>, Meter)),
-            VoltageC = mysql_value(proplists:get_value(<<"voltage_c">>, Meter)),
-            CurrentA = mysql_value(proplists:get_value(<<"current_a">>, Meter)),
-            CurrentB = mysql_value(proplists:get_value(<<"current_b">>, Meter)),
-            CurrentC = mysql_value(proplists:get_value(<<"current_c">>, Meter)),
-            ZeroLine = mysql_value(proplists:get_value(<<"zero_line">>, Meter)),
-            OpenRecord = mysql_value(proplists:get_value(<<"open_record">>, Meter)),
-            OpenNumebr = mysql_value(proplists:get_value(<<"open_number">>, Meter)),
-            ConcMode = mysql_value(proplists:get_value(<<"conc_mode">>, Meter)),
-            IsSteal = mysql_value(proplists:get_value(<<"is_steal">>, Meter)),
-            [MessageId, SerialNo, VoltageA, VoltageB, VoltageC, CurrentA, CurrentB, CurrentC, ZeroLine, OpenRecord, OpenNumebr, ConcMode, IsSteal]
-        end,
-    lists:map(Fun, MeterList).
+mysql_key(Key, ReplaceList) ->
+    Key1 = list_to_binary([case C > $A andalso C < $Z of true -> $a + C - $A; false -> C end ||<<C>> <= Key]),
+    case lists:keyfind(Key1, 1, ReplaceList) of
+        false -> <<"`", Key1/binary, "`">>;
+        {Key1, NewKey} -> <<"`", NewKey/binary, "`">>
+    end.
+
+
+mysql_value(<<>>) -> <<"null">>;
+mysql_value(Value) when is_integer(Value) -> <<"'", (integer_to_binary(Value))/binary, "'">>;
+mysql_value(Value) when is_list(Value) -> <<"'", (list_to_binary(Value))/binary, "'">>;
+mysql_value(Value) when is_binary(Value) -> <<"'", Value/binary, "'">>;
+mysql_value(_Value) -> <<"null">>.
+
+
+
+mqtt_msg_sql(MessageId, DeviceSn, List) ->
+    List1 = [{K,V} || {K,V} <- List, K =/= <<"meter_measurement">>, K =/= <<"serial_No">>],
+    {KeyBin, ValueBin} = list_to_sql(List1, [{<<"ts">>, <<"dev_ts">>}]),
+    <<"INSERT INTO mqtt_message (`id`,`device_sn`,", KeyBin/binary, ") VALUES ('", MessageId/binary, "','", DeviceSn/binary, "',", ValueBin/binary, ")">>.
+
+
+
+mqtt_data_sql(MessageId, MeterList) ->
+    mqtt_data_sql(MessageId, MeterList, []).
+
+mqtt_data_sql(MessageId, [Meter|List], SqlList) ->
+    {KeyBin, ValueBin} = list_to_sql(Meter),
+    Sql = <<"INSERT INTO mqtt_data (`message_id`,", KeyBin/binary, ") VALUES ('", MessageId/binary, "',", ValueBin/binary, ")">>,
+    mqtt_data_sql(MessageId, List, [Sql|SqlList]);
+mqtt_data_sql(_MessageId, [], SqlList) ->
+    SqlList.
+
+
+list_to_sql(List) ->
+    list_to_sql(List, []).
+
+
+list_to_sql([{K,V}|List], ReplaceList) ->
+    K1 = mysql_key(K, ReplaceList),
+    V1 = mysql_value(V),
+    list_to_sql(List, ReplaceList, K1, V1).
+
+list_to_sql([{K,V}|List], ReplaceList, KeyBin, ValueBin) ->
+    K1 = mysql_key(K, ReplaceList),
+    V1 = mysql_value(V),
+    list_to_sql(List, ReplaceList, <<K1/binary, ",", KeyBin/binary>>, <<V1/binary, ",", ValueBin/binary>>);
+list_to_sql([], _ReplaceList, KeyBin, ValueBin) ->
+    {KeyBin, ValueBin}.
+
 %%------------------------------------------------------------------------------
 %% Internal functions
 %%------------------------------------------------------------------------------
